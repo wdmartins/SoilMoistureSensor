@@ -19,6 +19,7 @@ const char * MQTT_IN_TOPIC = "/home-assistant/moist/request";
 // MQTT Commands
 const char MQTT_CMD_KEEP_AWAKE = 'a';   // Keep away for OTA update
 const char MQTT_CMD_DEEP_SLEEP = 's';   // Go back to deep sleep
+const char MQTT_CMD_DEEP_TEST = 't';    // Run hardware test
 
 // MQTT Events
 const char * MQTT_REPORT_MOISTURE = "/home-assistant/moist/moist";
@@ -101,6 +102,25 @@ uint8_t calculateMoistPercent(uint16_t dryness) {
   return percent;
 }
 
+void runTest(void) {
+  digitalWrite(GPIO_TOO_DRY, LOW);
+  digitalWrite(GPIO_TOO_WET, LOW);
+  digitalWrite(GPIO_MOIST, LOW);
+
+  digitalWrite(GPIO_TOO_DRY, HIGH);
+  delay(1000);
+  digitalWrite(GPIO_TOO_DRY, LOW);
+  digitalWrite(GPIO_TOO_WET, HIGH);
+  delay(1000);
+  digitalWrite(GPIO_TOO_WET, LOW);
+  digitalWrite(GPIO_MOIST, HIGH);
+  delay(1000);
+  digitalWrite(GPIO_MOIST, LOW);
+
+  uint16_t value = analogRead(GPIO_MOIST_SENSOR);
+  Serial.printf("[MOIST]: Dryness Read %u\n", value);
+}
+
 void processSensorRead(uint16_t dryness) {
   Serial.printf("[MOIST]: Dryness: %u\n", dryness);
   uint8_t moistPercent = calculateMoistPercent(dryness);
@@ -110,11 +130,11 @@ void processSensorRead(uint16_t dryness) {
   Serial.printf("[MOIST]: Reporting moisture. Moisture: %s%%\n", payload);
   mqttClient.publish(MQTT_REPORT_MOISTURE, payload);
   if (dryness > DRYNESS_HIGH) {
-    digitalWrite(GPIO_TOO_DRY, LOW);
+    digitalWrite(GPIO_TOO_DRY, HIGH);
   } else if (dryness < DRYNESS_LOW) {
-    digitalWrite(GPIO_TOO_WET, LOW);
+    digitalWrite(GPIO_TOO_WET, HIGH);
   } else {
-    digitalWrite(GPIO_MOIST, LOW);
+    digitalWrite(GPIO_MOIST, HIGH);
   }
 }
 
@@ -139,6 +159,10 @@ void callback(char* topic, byte* payload, uint8_t length) {
         delay(1000);
         ESP.deepSleep(DEEP_SLEEP_PERIOD);
       }
+      break;
+    case MQTT_CMD_DEEP_TEST:
+      Serial.println("[MQTT]: Start test...");
+      runTest();
       break;
     default: 
       Serial.printf("[MQTT]: Unknown MQTT Command: %c\n", (char) payload[0]);
@@ -220,18 +244,18 @@ void setup() {
   pinMode(GPIO_TOO_DRY, OUTPUT);
   pinMode(GPIO_TOO_WET, OUTPUT);
   pinMode(GPIO_MOIST, OUTPUT);
-  digitalWrite(GPIO_TOO_DRY, HIGH);
-  digitalWrite(GPIO_TOO_WET, HIGH);
-  digitalWrite(GPIO_MOIST, HIGH);
+  digitalWrite(GPIO_TOO_DRY, LOW);
+  digitalWrite(GPIO_TOO_WET, LOW);
+  digitalWrite(GPIO_MOIST, LOW);
 
   // Read moisture sensor and process data
   processSensorRead(analogRead(GPIO_MOIST_SENSOR));
   
   checkOTA();
 
-  digitalWrite(GPIO_TOO_DRY, HIGH);
-  digitalWrite(GPIO_TOO_WET, HIGH);
-  digitalWrite(GPIO_MOIST, HIGH);
+  digitalWrite(GPIO_TOO_DRY, LOW);
+  digitalWrite(GPIO_TOO_WET, LOW);
+  digitalWrite(GPIO_MOIST, LOW);
 
   // Deep Sleep
   if (deepSleep) {
@@ -252,6 +276,6 @@ void loop() {
     mqttClient.loop();
 
     // Indicate ready for OTA update
-    digitalWrite(GPIO_MOIST, LOW);
+    digitalWrite(GPIO_MOIST, HIGH);
   }
 }
