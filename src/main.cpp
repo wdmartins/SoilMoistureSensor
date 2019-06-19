@@ -20,9 +20,13 @@ const char * MQTT_IN_TOPIC = "/home-assistant/moist/request";
 const char MQTT_CMD_KEEP_AWAKE = 'a';   // Keep away for OTA update
 const char MQTT_CMD_DEEP_SLEEP = 's';   // Go back to deep sleep
 const char MQTT_CMD_DEEP_TEST = 't';    // Run hardware test
+const char MQTT_CMD_DEEP_RANGE = 'r';   // wet-Dry Range set
 
 // MQTT Events
 const char * MQTT_REPORT_MOISTURE = "/home-assistant/moist/moist";
+const char * MQTT_REPORT_TEST_ENDED = "/home-assistant/moist/testended";
+const char * MQTT_REPORT_RANGE = "/home-assistant/moist/range";
+const char * MQTT_OTA_READY = "/home-assistant/moist/otaready";
 
 // Moisture sensor values normalization constants
 const uint16_t MAX_SENSOR_VALUE = 900;
@@ -63,6 +67,11 @@ const uint8_t GPIO_TOO_WET = GPIO_RGB_LED_BLUE;
 const uint8_t GPIO_MOIST_SENSOR = GPIO_ANALOG_00;
 
 /*------------------------------------------------------------------------------------*/
+/* Forward Declarations                                                               */
+/*------------------------------------------------------------------------------------*/
+uint8_t calculateMoistPercent(uint16_t dryness);
+
+/*------------------------------------------------------------------------------------*/
 /* Global Variables                                                                   */
 /*------------------------------------------------------------------------------------*/
 // WiFi Manager
@@ -75,6 +84,13 @@ PubSubClient mqttClient(espClient);
 // Prevent Deep Sleep to Allow OTA updates
 bool deepSleep = true;
 
+// Default Mositure Range
+uint8_t tooWet = calculateMoistPercent(DRYNESS_LOW);
+uint8_t tooDry = calculateMoistPercent(DRYNESS_HIGH);
+
+// Prevent reporting in loop
+bool rangeReported = false;
+
 /*------------------------------------------------------------------------------------*/
 /* WiFi Manager Global Functions                                                      */
 /*------------------------------------------------------------------------------------*/
@@ -83,6 +99,13 @@ void configModeCallback (WiFiManager *myWiFiManager) {
   Serial.println("[WIFI]: Entered config mode");
   Serial.print("[WIFI]:"); Serial.println(WiFi.softAPIP());
   Serial.printf("[WIFI]: %s", (myWiFiManager->getConfigPortalSSID()).c_str());
+}
+
+void reportRange(void) {
+  char payload[64];
+  sprintf(payload, "From: %02u%% to: %02u%%", tooDry, tooWet);
+  Serial.printf("[MOIST] Reporting range [%s]", payload);
+  mqttClient.publish(MQTT_REPORT_RANGE, payload);
 }
 
 void checkOTA(void) {
@@ -129,9 +152,9 @@ void processSensorRead(uint16_t dryness) {
   sprintf(payload, "%u", moistPercent);
   Serial.printf("[MOIST]: Reporting moisture. Moisture: %s%%\n", payload);
   mqttClient.publish(MQTT_REPORT_MOISTURE, payload);
-  if (dryness > DRYNESS_HIGH) {
+  if (moistPercent <= tooDry) {
     digitalWrite(GPIO_TOO_DRY, HIGH);
-  } else if (dryness < DRYNESS_LOW) {
+  } else if (moistPercent >= tooWet) {
     digitalWrite(GPIO_TOO_WET, HIGH);
   } else {
     digitalWrite(GPIO_MOIST, HIGH);
@@ -163,6 +186,16 @@ void callback(char* topic, byte* payload, uint8_t length) {
     case MQTT_CMD_DEEP_TEST:
       Serial.println("[MQTT]: Start test...");
       runTest();
+      mqttClient.publish(MQTT_REPORT_TEST_ENDED, "");
+      break;
+    case MQTT_CMD_DEEP_RANGE:
+      Serial.printf("[MQTT]: Received new Wet-Dry range.");
+      char aux[16];
+      sprintf(aux, "%c%c", payload[1], payload[2]);
+      tooDry = atoi(aux);
+      sprintf(aux, "%c%c", payload[3], payload[4]);
+      tooWet = atoi(aux);
+      reportRange();
       break;
     default: 
       Serial.printf("[MQTT]: Unknown MQTT Command: %c\n", (char) payload[0]);
@@ -211,7 +244,10 @@ void setup() {
   if (!mqttClient.connected()) {
     reconnect();
   }
-  
+  mqttClient.publish(MQTT_OTA_READY, "No");
+
+  checkOTA();
+
   // Config time
   setenv("TZ", "EST5EDT,M3.2.0/02:00:00,M11.1.0/02:00:00", 1);
   configTime(0, 0, "pool.ntp.org");
@@ -250,9 +286,7 @@ void setup() {
 
   // Read moisture sensor and process data
   processSensorRead(analogRead(GPIO_MOIST_SENSOR));
-  
-  checkOTA();
-
+  delay(1000);
   digitalWrite(GPIO_TOO_DRY, LOW);
   digitalWrite(GPIO_TOO_WET, LOW);
   digitalWrite(GPIO_MOIST, LOW);
@@ -277,5 +311,13 @@ void loop() {
 
     // Indicate ready for OTA update
     digitalWrite(GPIO_MOIST, HIGH);
+
+    // Report current range
+    if (!rangeReported) {
+      // Report reay for OTA
+      mqttClient.publish(MQTT_OTA_READY, "yes");
+      reportRange();
+      rangeReported = true;
+    }
   }
 }
