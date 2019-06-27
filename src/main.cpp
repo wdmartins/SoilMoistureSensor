@@ -29,12 +29,12 @@ const char * MQTT_REPORT_RANGE = "/home-assistant/moist/range";
 const char * MQTT_OTA_READY = "/home-assistant/moist/otaready";
 
 // Moisture sensor values normalization constants
-const uint16_t MAX_SENSOR_VALUE = 900;
-const uint16_t MIN_SENSOR_VALUE = 400;
+const uint16_t MAX_SENSOR_VALUE = 600;
+const uint16_t MIN_SENSOR_VALUE = 300;
 const uint16_t NORM_SENSOR_RANGE = MAX_SENSOR_VALUE - MIN_SENSOR_VALUE;
 
-const uint16_t DRYNESS_LOW = 600;
-const uint16_t DRYNESS_HIGH = 700;
+const uint16_t DRYNESS_LOW = 400;
+const uint16_t DRYNESS_HIGH = 500;
 
 // Deep Sleep Period
 const uint64_t DEEP_SLEEP_PERIOD = 20e6; // 20 seconds
@@ -44,9 +44,9 @@ const uint64_t DEEP_SLEEP_PERIOD = 20e6; // 20 seconds
 /*------------------------------------------------------------------------------------*/
 const uint8_t GPIO_ANALOG_00 = 0;          // ESP8266 NodeMCU A0
 const uint8_t GPIO_UNUSED_00 = 0;          // ESP8266 NodeMCU D3
-const uint8_t GPIO_UNUSED_01 = 2;          // ESP8266 NodeMUC D4 (UART)
+const uint8_t GPIO_UNUSED_01 = 1;          // ESP8266 NodeMUC TX (UART)
 const uint8_t GPIO_UNUSED_02 = 2;          // ESP8266 NodeMUC D4 (Boot mode. Do not user for INPUT)
-const uint8_t GPIO_UNUSED_03 = 3;          // ESP8266 NodeMCU D9 (UART)
+const uint8_t GPIO_UNUSED_03 = 3;          // ESP8266 NodeMCU RX (UART)
 const uint8_t GPIO_DISPLAY_SDA = 4;        // ESP8266 NodeMCU D2 (SDA) 
 const uint8_t GPIO_DISPLAY_SCL = 5;        // ESP8266 NodeMCU D1 (SCL)
 const uint8_t GPIO_UNUSED_06 = 6;          // ESP8266 NodeMCU -+ F M
@@ -55,9 +55,9 @@ const uint8_t GPIO_UNUSED_08 = 8;          // ESP8266 NodeMCU  + A M
 const uint8_t GPIO_UNUSED_09 = 9;          // ESP8266 NodeMCU  + S O
 const uint8_t GPIO_UNUSED_10 = 10;         // ESP8266 NodeMCU  + H R
 const uint8_t GPIO_UNUSED_11 = 11;         // ESP8266 NodeMCU -+   Y
-const uint8_t GPIO_RGB_LED_RED = 12;       // ESP8266 NodeMCU D6
-const uint8_t GPIO_RGB_LED_BLUE = 13;      // ESP8266 NodeMUC D7
-const uint8_t GPIO_RGB_LED_GREEN = 14;     // ESP8266 NodeMCU D5
+const uint8_t GPIO_RGB_LED_GREEN = 12;     // ESP8266 NodeMCU D6
+const uint8_t GPIO_RGB_LED_RED = 13;       // ESP8266 NodeMCU D7
+const uint8_t GPIO_RGB_LED_BLUE = 14;      // ESP8266 NodeMUC D5
 const uint8_t GPIO_UNUSED_15 = 15;         // ESP8266 NodeMCU D8 (Boot from SD Card)
 const uint8_t GPIO_UNUSED_16 = 16;         // ESP8266 NodeMCU D0
 
