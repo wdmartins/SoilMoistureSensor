@@ -14,7 +14,10 @@ const char* ACCESS_POINT_PASS = "esp8266";
 // MQTT constants
 const char * MQTT_CLIENT_PREFIX = "MoistSensor-";
 const char * MQTT_BROKER_ADDRESS = "192.168.1.215";
-const char * MQTT_IN_TOPIC = "/home-assistant/moist/request";
+const char * MQTT_IN_TOPIC_RAW = "/home-assistant/moist/%c/request";
+
+// MQTT Moist Client Id. Every Moisture Sensor in the MQTT network must have a different id
+const char MQTT_MOIST_CLIENT_ID = 'A';
 
 // MQTT Commands
 const char MQTT_CMD_KEEP_AWAKE = 'a';   // Keep away for OTA update
@@ -23,10 +26,10 @@ const char MQTT_CMD_DEEP_TEST = 't';    // Run hardware test
 const char MQTT_CMD_DEEP_RANGE = 'r';   // wet-Dry Range set
 
 // MQTT Events
-const char * MQTT_REPORT_MOISTURE = "/home-assistant/moist/moist";
-const char * MQTT_REPORT_TEST_ENDED = "/home-assistant/moist/testended";
-const char * MQTT_REPORT_RANGE = "/home-assistant/moist/range";
-const char * MQTT_OTA_READY = "/home-assistant/moist/otaready";
+const char * MQTT_REPORT_MOISTURE_RAW = "/home-assistant/moist/%c/moist";
+const char * MQTT_REPORT_TEST_ENDED_RAW = "/home-assistant/moist/%c/testended";
+const char * MQTT_REPORT_RANGE_RAW = "/home-assistant/moist/%c/range";
+const char * MQTT_OTA_READY_RAW = "/home-assistant/moist/%c/otaready";
 
 // Moisture sensor values normalization constants
 const uint16_t MAX_SENSOR_VALUE = 600;
@@ -91,6 +94,19 @@ uint8_t tooDry = calculateMoistPercent(DRYNESS_HIGH);
 // Prevent reporting in loop
 bool rangeReported = false;
 
+char MQTT_IN_TOPIC[64];
+char MQTT_REPORT_MOISTURE[64];
+char MQTT_REPORT_TEST_ENDED[64];
+char MQTT_REPORT_RANGE[64];
+char MQTT_OTA_READY[64];
+
+void initMqttTopics(void) {
+  sprintf(MQTT_IN_TOPIC, MQTT_IN_TOPIC_RAW, MQTT_MOIST_CLIENT_ID);
+  sprintf(MQTT_REPORT_MOISTURE, MQTT_REPORT_MOISTURE_RAW, MQTT_MOIST_CLIENT_ID);
+  sprintf(MQTT_REPORT_TEST_ENDED, MQTT_REPORT_TEST_ENDED_RAW, MQTT_MOIST_CLIENT_ID);
+  sprintf(MQTT_REPORT_RANGE, MQTT_REPORT_RANGE_RAW, MQTT_MOIST_CLIENT_ID);
+  sprintf(MQTT_OTA_READY, MQTT_OTA_READY_RAW, MQTT_MOIST_CLIENT_ID);
+}
 /*------------------------------------------------------------------------------------*/
 /* WiFi Manager Global Functions                                                      */
 /*------------------------------------------------------------------------------------*/
@@ -237,6 +253,7 @@ void setup() {
   }
 
   // Setup MQTT client
+  initMqttTopics();
   mqttClient.setServer(MQTT_BROKER_ADDRESS, 1883);
   mqttClient.setCallback(callback);
 
