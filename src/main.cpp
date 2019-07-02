@@ -20,10 +20,10 @@ const char * MQTT_IN_TOPIC_RAW = "/home-assistant/moist/%c/request";
 const char MQTT_MOIST_CLIENT_ID = 'A';
 
 // MQTT Commands
-const char MQTT_CMD_KEEP_AWAKE = 'a';   // Keep away for OTA update
+const char MQTT_CMD_KEEP_AWAKE = 'a';   // Keep awake for OTA update
 const char MQTT_CMD_DEEP_SLEEP = 's';   // Go back to deep sleep
 const char MQTT_CMD_DEEP_TEST = 't';    // Run hardware test
-const char MQTT_CMD_DEEP_RANGE = 'r';   // wet-Dry Range set
+const char MQTT_CMD_DEEP_RANGE = 'r';   // wet-dry Range set
 
 // MQTT Events
 const char * MQTT_REPORT_MOISTURE_RAW = "/home-assistant/moist/%c/moist";
@@ -196,7 +196,7 @@ void callback(char* topic, byte* payload, uint8_t length) {
         deepSleep = true;
         Serial.println("[MQTT]: Going to sleep now...");
         delay(1000);
-        ESP.deepSleep(DEEP_SLEEP_PERIOD);
+        ESP.deepSleep(ESP.deepSleepMax());
       }
       break;
     case MQTT_CMD_DEEP_TEST:
@@ -310,7 +310,7 @@ void setup() {
 
   // Deep Sleep
   if (deepSleep) {
-    ESP.deepSleep(DEEP_SLEEP_PERIOD);
+    ESP.deepSleep(ESP.deepSleepMax());
   }
 
 }
