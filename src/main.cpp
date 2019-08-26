@@ -3,6 +3,7 @@
 #include <WiFiManager.h>
 #include <ArduinoOTA.h>
 #include <PubSubClient.h>
+#include "secret.h"
 
 /*------------------------------------------------------------------------------------*/
 /* Constant Definitions                                                               */
@@ -13,7 +14,6 @@ const char* ACCESS_POINT_PASS = "esp8266";
 
 // MQTT constants
 const char * MQTT_CLIENT_PREFIX = "MoistSensor-";
-const char * MQTT_BROKER_ADDRESS = "192.168.1.215";
 const char * MQTT_IN_TOPIC_RAW = "/home-assistant/moist/%c/request";
 
 // MQTT Moist Client Id. Every Moisture Sensor in the MQTT network must have a different id
@@ -40,7 +40,11 @@ const uint16_t DRYNESS_LOW = 400;
 const uint16_t DRYNESS_HIGH = 500;
 
 // Deep Sleep Period
-const uint64_t DEEP_SLEEP_PERIOD = 20e6; // 20 seconds
+const uint64_t DEEP_SLEEP_PERIOD_TEST = 20e6;   // 20 seconds
+const uint64_t DEEP_SLEEP_PERIOD_PROD = 3600e6; // 1 hour
+const uint64_t DEEP_SLEEP_PERIOD = DEEP_SLEEP_PERIOD_PROD;
+const uint16_t MAX_SLEEP_PERIOD_WITHOUT_REPORTING = 3;
+const uint16_t MAX_PERCENT_POINTS_WITHOUT_REPORTING = 5;
 
 /*------------------------------------------------------------------------------------*/
 /* GPIO Definitions                                                                   */
@@ -59,8 +63,8 @@ const uint8_t GPIO_UNUSED_09 = 9;          // ESP8266 NodeMCU  + S O
 const uint8_t GPIO_UNUSED_10 = 10;         // ESP8266 NodeMCU  + H R
 const uint8_t GPIO_UNUSED_11 = 11;         // ESP8266 NodeMCU -+   Y
 const uint8_t GPIO_RGB_LED_GREEN = 12;     // ESP8266 NodeMCU D6
-const uint8_t GPIO_RGB_LED_RED = 13;       // ESP8266 NodeMCU D7
-const uint8_t GPIO_RGB_LED_BLUE = 14;      // ESP8266 NodeMUC D5
+const uint8_t GPIO_RGB_LED_BLUE = 13;      // ESP8266 NodeMCU D7
+const uint8_t GPIO_RGB_LED_RED = 14;       // ESP8266 NodeMUC D5
 const uint8_t GPIO_UNUSED_15 = 15;         // ESP8266 NodeMCU D8 (Boot from SD Card)
 const uint8_t GPIO_UNUSED_16 = 16;         // ESP8266 NodeMCU D0
 
@@ -77,6 +81,15 @@ uint8_t calculateMoistPercent(uint16_t dryness);
 /*------------------------------------------------------------------------------------*/
 /* Global Variables                                                                   */
 /*------------------------------------------------------------------------------------*/
+// RTC Data Structure
+struct {
+  uint32_t crc32;
+  struct {
+    uint16_t lastReadValue;
+    uint16_t periodCount;
+  } data;
+} rtcData;
+
 // WiFi Manager
 WiFiManager wifiManager;
 
@@ -108,7 +121,7 @@ void initMqttTopics(void) {
   sprintf(MQTT_OTA_READY, MQTT_OTA_READY_RAW, MQTT_MOIST_CLIENT_ID);
 }
 /*------------------------------------------------------------------------------------*/
-/* WiFi Manager Global Functions                                                      */
+/* Global Functions                                                                   */
 /*------------------------------------------------------------------------------------*/
 // WiFiManager Configuration CallBack
 void configModeCallback (WiFiManager *myWiFiManager) {
@@ -117,6 +130,34 @@ void configModeCallback (WiFiManager *myWiFiManager) {
   Serial.printf("[WIFI]: %s", (myWiFiManager->getConfigPortalSSID()).c_str());
 }
 
+// Calculate CRC32 to validate RTC stored data
+uint32_t calculateCRC32(const uint8_t *data, size_t length) {
+  uint32_t crc = 0xffffffff;
+  while (length--) {
+    uint8_t c = *data++;
+    for (uint32_t i = 0x80; i > 0; i >>= 1) {
+      bool bit = crc & 0x80000000;
+      if (c & i) {
+        bit = !bit;
+      }
+      crc <<= 1;
+      if (bit) {
+        crc ^= 0x04c11db7;
+      }
+    }
+  }
+  return crc;
+}
+
+// Save data to RTC storage (Deep Sleep surviving)
+void saveRtcData(void) {
+  // Update CRC32 of data
+  rtcData.crc32 = calculateCRC32((uint8_t*) &rtcData.data, sizeof(rtcData.data));
+  // Write struct to RTC memory
+  ESP.rtcUserMemoryWrite(0, (uint32_t*) &rtcData, sizeof(rtcData));
+}
+
+// Report set moisture range (too wet/too dry) through MQTT
 void reportRange(void) {
   char payload[64];
   sprintf(payload, "From: %02u%% to: %02u%%", tooDry, tooWet);
@@ -124,6 +165,7 @@ void reportRange(void) {
   mqttClient.publish(MQTT_REPORT_RANGE, payload);
 }
 
+// Check is system should stay awake for OTA update
 void checkOTA(void) {
   Serial.println("[OTA]: Checking OTA...");
   for (uint8_t i = 0; i < 20; i++) {
@@ -133,6 +175,7 @@ void checkOTA(void) {
   Serial.println("[OTA]: End checking OTA...");
 }
 
+// Calculate moisture percentage base on dryness value provide by sensor
 uint8_t calculateMoistPercent(uint16_t dryness) {
   // Normalize
   dryness = (dryness > MAX_SENSOR_VALUE ? MAX_SENSOR_VALUE : dryness);
@@ -141,6 +184,7 @@ uint8_t calculateMoistPercent(uint16_t dryness) {
   return percent;
 }
 
+// Run system test
 void runTest(void) {
   digitalWrite(GPIO_TOO_DRY, LOW);
   digitalWrite(GPIO_TOO_WET, LOW);
@@ -160,14 +204,20 @@ void runTest(void) {
   Serial.printf("[MOIST]: Dryness Read %u\n", value);
 }
 
-void processSensorRead(uint16_t dryness) {
-  Serial.printf("[MOIST]: Dryness: %u\n", dryness);
-  uint8_t moistPercent = calculateMoistPercent(dryness);
-  // Report to MQTT broker
-  char payload[20];
-  sprintf(payload, "%u", moistPercent);
-  Serial.printf("[MOIST]: Reporting moisture. Moisture: %s%%\n", payload);
-  mqttClient.publish(MQTT_REPORT_MOISTURE, payload);
+// Read moisture sensor value
+uint16_t readSensor(void) {
+  // Read three times and report average
+  uint16_t read1 = analogRead(GPIO_MOIST_SENSOR);
+  delay(500);
+  uint16_t read2 = analogRead(GPIO_MOIST_SENSOR);
+  delay(500);
+  uint16_t read3 = analogRead(GPIO_MOIST_SENSOR);
+  Serial.printf("[MOIST]: Dryness reads: (%u), (%u), (%u)\n", read1, read2, read3);
+  return (read1 + read2 + read3) / 3;
+}
+
+// Process sensor value
+void processSensorRead(uint16_t moistPercent) {
   if (moistPercent <= tooDry) {
     digitalWrite(GPIO_TOO_DRY, HIGH);
   } else if (moistPercent >= tooWet) {
@@ -175,6 +225,15 @@ void processSensorRead(uint16_t dryness) {
   } else {
     digitalWrite(GPIO_MOIST, HIGH);
   }
+}
+
+// Report current moisture value through MQTT
+void publishMoisture(uint16_t moistPercent) {
+  // Report to MQTT broker
+  char payload[20];
+  sprintf(payload, "%u", moistPercent);
+  Serial.printf("[MOIST]: Reporting moisture. Moisture: %s%%\n", payload);
+  mqttClient.publish(MQTT_REPORT_MOISTURE, payload);
 }
 
 // MQTT Subscribe Callback
@@ -196,7 +255,7 @@ void callback(char* topic, byte* payload, uint8_t length) {
         deepSleep = true;
         Serial.println("[MQTT]: Going to sleep now...");
         delay(1000);
-        ESP.deepSleep(ESP.deepSleepMax());
+        ESP.deepSleep(DEEP_SLEEP_PERIOD);
       }
       break;
     case MQTT_CMD_DEEP_TEST:
@@ -228,7 +287,7 @@ void reconnect() {
     String clientId = MQTT_CLIENT_PREFIX;
     clientId += String(random(0xffff), HEX);
     // Attempt to connect
-    if (mqttClient.connect(clientId.c_str())) {
+    if (mqttClient.connect(clientId.c_str(), MQTT_USERNAME, MQTT_PASSWORD)) {
       Serial.println("[MQTT]: Connected");
       // ... and resubscribe
       mqttClient.subscribe(MQTT_IN_TOPIC);
@@ -242,6 +301,54 @@ void reconnect() {
 
 void setup() {
   Serial.begin(115200);
+  delay(1000);
+  Serial.println("");
+
+  // Check RTC Memory
+  if (ESP.rtcUserMemoryRead(0, (uint32_t*) &rtcData, sizeof(rtcData))) {
+    uint32_t crcOfData = calculateCRC32((uint8_t*) &rtcData.data, sizeof(rtcData.data));
+    Serial.printf("[RTC]: Calculate CRC32: %X\n", crcOfData);
+    if (crcOfData != rtcData.crc32) {
+      Serial.printf("[RTC]: Store CRC32 (%X) does not match calculated CRC32\n", rtcData.crc32);
+      Serial.println("[RTC]: Powering up");
+      rtcData.data.periodCount = MAX_SLEEP_PERIOD_WITHOUT_REPORTING;
+      rtcData.data.lastReadValue = 0;
+    } else {
+      Serial.printf("[RTC]: Store CRC32 (%X) matches calculated CRC32\n", rtcData.crc32);
+      Serial.println("[RTC]: Waiking up");
+      Serial.printf("[RTC]: Stored values: Period = %u, LastRead = %u\n", rtcData.data.periodCount, rtcData.data.lastReadValue);
+    }
+  }
+
+  // GPIO Setup
+  pinMode(GPIO_TOO_DRY, OUTPUT);
+  pinMode(GPIO_TOO_WET, OUTPUT);
+  pinMode(GPIO_MOIST, OUTPUT);
+
+  runTest();
+
+
+  // Read moisture sensor and process data
+  uint16_t moistPercent = calculateMoistPercent(readSensor());
+  if (moistPercent > (rtcData.data.lastReadValue + MAX_PERCENT_POINTS_WITHOUT_REPORTING) ||
+      moistPercent < (rtcData.data.lastReadValue - MAX_PERCENT_POINTS_WITHOUT_REPORTING) ||
+      rtcData.data.periodCount ++ > MAX_SLEEP_PERIOD_WITHOUT_REPORTING) {
+    rtcData.data.periodCount = 0;
+    rtcData.data.lastReadValue = moistPercent;
+    saveRtcData();
+  } else {
+    Serial.println("[MOIST]: No reporting needed now. Go back to sleep.");
+    rtcData.data.lastReadValue = moistPercent;
+    saveRtcData();
+    delay(1000);
+    ESP.deepSleep(DEEP_SLEEP_PERIOD);
+  }
+
+  digitalWrite(GPIO_TOO_DRY, LOW);
+  digitalWrite(GPIO_TOO_WET, LOW);
+  digitalWrite(GPIO_MOIST, LOW);
+
+  processSensorRead(moistPercent);
 
   // Instantiate and setup WiFiManager
   // wifiManager.resetSettings(); Uncomment to reset wifi settings
@@ -293,24 +400,14 @@ void setup() {
   ArduinoOTA.begin();
   Serial.println("[OTA]: Ready");
 
-  // GPIO Setup
-  pinMode(GPIO_TOO_DRY, OUTPUT);
-  pinMode(GPIO_TOO_WET, OUTPUT);
-  pinMode(GPIO_MOIST, OUTPUT);
-  digitalWrite(GPIO_TOO_DRY, LOW);
-  digitalWrite(GPIO_TOO_WET, LOW);
-  digitalWrite(GPIO_MOIST, LOW);
+  Serial.printf("[MOIST]: Publishing mositure value (%u)", moistPercent);
+  publishMoisture(moistPercent);
+  Serial.println("[MOIST]: Going back to sleep");
 
-  // Read moisture sensor and process data
-  processSensorRead(analogRead(GPIO_MOIST_SENSOR));
   delay(1000);
-  digitalWrite(GPIO_TOO_DRY, LOW);
-  digitalWrite(GPIO_TOO_WET, LOW);
-  digitalWrite(GPIO_MOIST, LOW);
-
   // Deep Sleep
   if (deepSleep) {
-    ESP.deepSleep(ESP.deepSleepMax());
+    ESP.deepSleep(DEEP_SLEEP_PERIOD);
   }
 
 }
